@@ -1,0 +1,6 @@
+# Release checksums use the same LF text bytes locally and in GitHub ZIP archives.
+* text=auto eol=lf
+*.exe -text
+*.ico -text
+*.jpg -text
+*.png -text

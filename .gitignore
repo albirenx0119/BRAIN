@@ -1,0 +1,41 @@
+# Local Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Runtime logs and display caches
+logs/
+*.log
+.preview-cache-*/
+
+# Generated test data
+.preview-check-*/
+.align-check-*/
+.loading-check-*/
+.manual-check-*/
+.view-check-*/
+.export-check-*/
+.volume-check-*/
+.BRAIN-export-*/
+.check-*/
+.gui-check-*/
+
+# Packaging intermediates
+build/
+dist/
+.stack-cache-*/
+.stack-check-*/
+.tiff-check-*/
+
+# Development files kept locally, excluded from the runtime repository
+/tests/
+/launcher.cs
+/build_launcher.cmd
+.updates/
+/.local/
+
+.native-workflow-*/
+.ncc-*/
+.graph-*/
+.brain-release-*/

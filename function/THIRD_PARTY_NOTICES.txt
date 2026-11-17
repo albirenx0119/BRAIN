@@ -1,0 +1,15 @@
+BRAIN: third-party library notices
+
+OpenCV (4.8 and later, below 5)
+Project: https://opencv.org/
+API documentation: https://docs.opencv.org/4.x/
+License: Apache License, Version 2.0 (licenses/Apache-2.0.txt).
+Installed separately through opencv-python; its wheel and dependencies retain
+their own license files and notices. BRAIN does not bundle those wheel files.
+
+Pillow / NumPy / Python and Tcl/Tk
+These dependencies are installed separately and retain their own licenses.
+Pillow: https://github.com/python-pillow/Pillow/blob/main/LICENSE
+NumPy: https://github.com/numpy/numpy/blob/main/LICENSE.txt
+Python: https://docs.python.org/3/license.html
+Tcl/Tk: https://www.tcl-lang.org/software/tcltk/license.html
