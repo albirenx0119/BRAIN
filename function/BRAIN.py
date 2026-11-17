@@ -9,7 +9,9 @@ import subprocess
 import tempfile
 import traceback
 from pathlib import Path
-from app_paths import APP_ROOT, FUNCTION_ROOT
+from app_paths import APP_ROOT, FUNCTION_ROOT, FULL_NAME
+import workspace_state
+from channel_widgets import ChannelCheck
 
 # All Windows entry points share the native splash and dependency checks.
 if __name__ == '__main__' and os.name == 'nt' and '--app-start' not in sys.argv:
@@ -108,6 +110,9 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
         self._logger = logging.getLogger(f'BRAIN.{id(self)}')
         self._logger.setLevel(logging.INFO)
         self._logger.propagate = False
+        self._resume_plan=None
+        self._loaded_resume=None
+        self._resume_ignored_paths=frozenset()
         self.folder: Path | None = None
         self.images: tuple[ImageFile, ...] = ()
         self._excluded_paths = set()
@@ -249,7 +254,7 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
         header = ttk.Frame(data)
         header.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         ttk.Label(header, text='BRAIN', style='Title.TLabel').pack(side='left')
-        ttk.Label(header, text='OFFLINE', foreground='#216675').pack(side='right')
+        ttk.Label(header,text=FULL_NAME,font=('Segoe UI',10)).pack(side='left',padx=(12,0),anchor='s',pady=(0,3))
 
         picker = ttk.Frame(data)
         picker.grid(row=1, column=0, sticky='ew')
@@ -311,7 +316,7 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
         self.go_button.grid(row=0, column=1)
 
         self.analysis_tab = ttk.Frame(self.tabs, padding=8)
-        self.tabs.add(self.analysis_tab, text='analyze')
+        self.tabs.add(self.analysis_tab, text='align')
         self.analysis_tab.columnconfigure(0, weight=0, minsize=290)
         self.analysis_tab.columnconfigure(1, weight=1)
         self.analysis_tab.rowconfigure(0, weight=1, uniform='analysis_halves')
@@ -509,7 +514,7 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
             button.pack(anchor='w',pady=3); self.save_merge_radios.append(button)
         self.save_channels_frame = ttk.Frame(self.save_merge_box)
         self.save_channels_frame.pack(fill='x',pady=4)
-        ttk.Label(self.save_merge_box,text='analyzeタブの表示色・インテンシティで合成し、元解像度のRGB画像（8-bit）として保存します。',wraplength=1000).pack(anchor='w',pady=4)
+        ttk.Label(self.save_merge_box,text='alignタブの表示色・インテンシティで合成し、元解像度のRGB画像（8-bit）として保存します。',wraplength=1000).pack(anchor='w',pady=4)
         self.save_movements_check = ttk.Checkbutton(contents,text='移動・回転のメタデータ一覧（CSV）',variable=self.save_movements)
         self.save_movements_check.pack(anchor='w',pady=4)
         ttk.Label(contents,text='params.json（解析条件・全画像の変換・追加補正）は常に保存します。').pack(anchor='w',pady=(10,0))
@@ -735,7 +740,8 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
                 self.alignment_matrices[index], self.alignment_canvas)
             record = self.alignment_records[index]
             metric_label = '未成立・照合時NCC' if record.get('status')=='unregistered' else '自動NCC（補正前）' if index in self._manual_modified else 'NCC'
-            self.result_info.set(f"画像 {self._preview_slot+1} / {self.preview_slot_count()} · {metric_label} {record['score']:.3f}"
+            score=record.get('score');metric=f'{metric_label} {score:.3f}' if score is not None else '復元済み（NCC記録なし）'
+            self.result_info.set(f"画像 {self._preview_slot+1} / {self.preview_slot_count()} · {metric}"
                                  + (' · '+record['warning'] if record['warning'] else ''))
             if self.raw_display.get() and self._tiff_pages==1 and not self.large_raw_requested():
                 self._raw_aligned = render_result(self.analysis_files[index].path,
@@ -1122,6 +1128,7 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
         final = [m.copy() for m in self.alignment_matrices]
         records = copy.deepcopy(self.alignment_records)
         settings = copy.deepcopy(self._analysis_settings)
+        settings['_workspace']=self.workspace_snapshot()
         manual_events = copy.deepcopy(self._manual_events)
         canvas = tuple(self.alignment_canvas)
         directory,name = self.save_directory.get(),self.save_name.get()
@@ -1611,11 +1618,19 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
         requested_images = tuple(self.images) if self.folder is not None and folder.resolve()==self.folder else None
         requested_selected = self.active_images() if requested_images is not None else None
         self._loading_ignore_excluded=self.ignore_excluded.get()
+        resume_plan=self._resume_plan
+        self._loaded_resume=None
+        sequence=self.data_sequence()
+        filtered=tuple(image for image in sequence if not self._loading_ignore_excluded or image is None or image.path not in self._excluded_paths)
+        positions={image.path:i+1 for i,image in enumerate(filtered) if image is not None}
+        resume_slots=tuple(positions[image.path] for image in requested_selected) if requested_selected else ()
         def worker():
             cache = None
             try:
                 images = scan_folder(folder)
-                if requested_images is not None and set(images)==set(requested_images): images = requested_selected
+                if self.folder is not None and folder.resolve()==self.folder:
+                    images=tuple(image for image in images if image.path not in self._resume_ignored_paths)
+                if requested_images is not None and (resume_plan or set(images)==set(requested_images)): images = requested_selected
                 calibration = detect_calibration(folder,[image.path for image in images])
                 if len(images)>=2:
                     cache = PreviewCache(cache_root,[image.path for image in images])
@@ -1631,6 +1646,8 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
                         raise ValueError('複数ページTIFFは、全画像のチャンネル数とページ順を統一してください。PNG/JPEGとの混在はできません。')
                 if cancel.is_set():
                     raise Cancelled()
+                if resume_plan:
+                    self._loaded_resume=workspace_state.prepare(resume_plan,[image.path for image in images],cache,resume_slots,len(filtered),cancel,lambda i,n,text:events.put(('progress',i,n,text)))
                 events.put(('done',folder,images,cache,calibration))
                 cache = None
             except Cancelled:
@@ -1657,7 +1674,7 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
                     _,number,total,name = event
                     self._loading_bar.stop()
                     self._loading_bar.configure(mode='determinate',value=number/total*100)
-                    self._loading_text.set(f'表示用画像を準備中: {name}')
+                    self._loading_text.set(name if self._resume_plan else f'表示用画像を準備中: {name}')
                     self._loading_percent.set(f'{number} / {total} 枚  ({number/total*100:.0f}%)')
                     continue
                 self._loading_bar.stop()
@@ -1672,6 +1689,11 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
                         self.add_log('データ読み込みを中止しました。')
                     elif self.folder is not None and folder.resolve()==self.folder and images==self.active_images() and len(images)>=2:
                         self.finish_analyze_loading(cache,calibration,images,self._loading_ignore_excluded)
+                        if self._loaded_resume:
+                            try:workspace_state.apply(self,self._loaded_resume)
+                            except (OSError,ValueError,KeyError,TypeError) as error:
+                                self.status_text.set('復元エラー: '+str(error));self.add_log(self.status_text.get(),level='error')
+                            self._loaded_resume=None
                     else:
                         if cache is not None: cache.close()
                         self.select_folder(folder,images)
@@ -1681,6 +1703,8 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
                 else:
                     self.status_text.set(f'読み込みエラー: {event[1]}')
                     self.add_log(self.status_text.get())
+                if self._loaded_resume and self._loaded_resume.get('stack') is not None:self._loaded_resume['stack'].close()
+                self._loaded_resume=None;self._resume_plan=None
                 if self._close_after_loading:
                     self.close()
                 return
@@ -1693,6 +1717,9 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
             return False
         self.add_log(f'フォルダを選択: {folder}')
         # Clear the previous choice before scanning so stale data cannot proceed.
+        self._resume_plan = None
+        self._loaded_resume = None
+        self._resume_ignored_paths=frozenset()
         self.folder = None
         self.images = self.analysis_files = ()
         self._excluded_paths.clear();self._analysis_slice_indices=();self._analysis_total_slices=0
@@ -1737,6 +1764,9 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
         self.go_button.state(['!disabled'])
         return True
 
+    def workspace_snapshot(self):
+        return workspace_state.snapshot(self)
+
     def go_analyze(self):
         if self._alignment_busy or self._loading_busy or self._raw_busy:
             return
@@ -1744,7 +1774,7 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
             return
         # Re-scan at confirmation time in case files changed after selection.
         try:
-            current = scan_folder(self.folder)
+            current = tuple(image for image in scan_folder(self.folder) if image.path not in self._resume_ignored_paths)
         except (OSError, ValueError):
             self.select_folder(self.folder)
             return
@@ -1753,6 +1783,14 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
             self.status_text.set('フォルダの内容が変わりました。一覧を再確認してください。')
             self.add_log(self.status_text.get())
             return
+        self._resume_plan=None
+        try:
+            candidates=workspace_state.discover(self.folder)
+            if candidates and messagebox.askyesno('保存済み解析の読み込み','メタデータを読んで解析済みデータを読み込みますか？\n\nはい：保存した状態を復元します。\nいいえ：画像から解析しなおします。',parent=self):
+                self._resume_plan=workspace_state.make_plan(candidates,self.images)
+                workspace_state.install_sequence(self,self._resume_plan)
+        except (OSError,ValueError,KeyError,TypeError) as error:
+            self.status_text.set('メタデータ読み込みエラー: '+str(error));self.add_log(self.status_text.get(),level='error');return
         self.load_folder(self.folder)
 
     def finish_analyze_loading(self, cache, calibration=None,images=None,ignore_excluded=None):
@@ -1786,7 +1824,7 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
         self.save_channel_vars = [tk.BooleanVar(value=True) for _ in range(self._tiff_pages)]
         self.save_channel_checks = []
         for page,var in enumerate(self.save_channel_vars):
-            widget = ttk.Checkbutton(self.save_channels_frame,text=f'Ch {page+1}',variable=var)
+            widget = ChannelCheck(self.save_channels_frame,color=lambda p=page:self.tiff_view.channels[p]['color'].get() if p<len(self.tiff_view.channels) else 'Gray',text=f'Ch {page+1}',variable=var)
             widget.grid(row=page//8,column=page%8,sticky='w',padx=6,pady=3)
             self.save_channel_checks.append(widget)
         self.update_save_merge_controls()
@@ -1807,7 +1845,7 @@ class BRAIN(RawPreviewWorkflow,tk.Tk):
         self.tabs.select(self.analysis_tab)
         self.show_preview(0)
         self.stack_panel.sync_analysis(force=True)
-        self.add_log('analyzeタブを開きました。')
+        self.add_log('alignタブを開きました。')
 
 
 if __name__ == '__main__':

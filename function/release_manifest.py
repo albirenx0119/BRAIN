@@ -33,7 +33,7 @@ def write_manifest(number=None):
     previous = {}
     path = APP_ROOT/'version.json'
     if path.exists(): previous = json.loads(path.read_text(encoding='utf-8-sig'))
-    number = number or previous.get('version','1.0.0')
+    number = number or previous.get('version','1.0.1')
     if not re.fullmatch(r'\d+\.\d+\.\d+',number): raise ValueError('Use a version such as 1.0.0')
     notes = read_release_notes(number)
     updated=datetime.now(timezone(timedelta(hours=9)))

@@ -3,6 +3,8 @@
 """Interactive desktop workspace for a first serial-section 3D workflow."""
 from __future__ import annotations
 import copy
+import json
+import csv
 import queue
 import threading
 import time
@@ -10,6 +12,8 @@ from pathlib import Path
 from app_paths import APP_ROOT, FUNCTION_ROOT
 from ui_controls import center_dialog
 from scale_bars import ScaleBarControls,horizontal_bar
+from slider_controls import ArrowScale
+from channel_widgets import ChannelCheck
 import tkinter as tk
 from tkinter import ttk, filedialog
 import numpy as np
@@ -53,6 +57,8 @@ class VolumePanel(ttk.Frame):
         self.measure_mode=tk.BooleanVar(value=False)
         self.measure_text=tk.StringVar(value='測定をONにして、画像上の2点をクリックしてください。')
         self.measure_points=[]
+        self.measurements=[]
+        self._measurement_serial=0
         self._z_confirmed=False
         self.yaw,self.pitch,self.zoom = 55.,20.,1.
         self.pan = (0.,0.)
@@ -134,7 +140,7 @@ class VolumePanel(ttk.Frame):
         self.ap_combo.bind('<<ComboboxSelected>>',lambda event:self.change_ap_order())
         ttk.Label(display,text='AP方向の表示間隔（標準 = 1）').pack(anchor='w',pady=(8,0))
         spacing_row = ttk.Frame(display); spacing_row.pack(fill='x')
-        self.display_ap_spacing_slider = ttk.Scale(spacing_row,from_=.1,to=10.,
+        self.display_ap_spacing_slider = ArrowScale(spacing_row,from_=.1,to=10.,
             variable=self.display_ap_spacing,command=self.set_display_ap_spacing,takefocus=True)
         self.display_ap_spacing_slider.pack(side='left',fill='x',expand=True)
         self._controls.append(self.display_ap_spacing_slider)
@@ -150,7 +156,7 @@ class VolumePanel(ttk.Frame):
         self.display_ap_spacing_slider.bind('<MouseWheel>',self.step_display_ap_spacing)
         ttk.Label(display,text='左：狭く / 右：広く（実際のZは保持）').pack(anchor='w')
         ttk.Label(display,text='画像の不透明度').pack(anchor='w',pady=(8,0))
-        slider = ttk.Scale(display,from_=1,to=100,variable=self.opacity,command=lambda value:self.request_draw())
+        slider = ArrowScale(display,from_=1,to=100,variable=self.opacity,command=lambda value:self.request_draw())
         slider.pack(fill='x'); self._controls.append(slider)
         ttk.Label(display,textvariable=self.opacity_text).pack(anchor='w')
         ttk.Label(display,text='チャンネル別の不透明度').pack(anchor='w',pady=(8,0))
@@ -158,7 +164,7 @@ class VolumePanel(ttk.Frame):
         ttk.Checkbutton(display,text='選択切片を強調（ほかを薄く表示）',variable=self.highlight_section,command=self.request_draw).pack(anchor='w',pady=(8,0))
         ttk.Label(display,textvariable=self.selected_section_info,wraplength=275).pack(anchor='w',pady=3)
         ttk.Label(display,textvariable=self.cut_side).pack(anchor='w',pady=(8,0))
-        self.cut_slider=ttk.Scale(display,from_=0,to=1,variable=self.cut_count,command=lambda value:self.request_draw(),state='disabled',takefocus=True)
+        self.cut_slider=ArrowScale(display,from_=0,to=1,variable=self.cut_count,command=lambda value:self.request_draw(),state='disabled',takefocus=True)
         self.cut_slider.pack(fill='x')
         cut_row=ttk.Frame(display);cut_row.pack(fill='x')
         ttk.Label(cut_row,textvariable=self.cut_text).pack(side='left')
@@ -182,7 +188,10 @@ class VolumePanel(ttk.Frame):
         measure.pack(fill='x',pady=(0,8))
         ttk.Checkbutton(measure,text='測定 ON（画像上の2点を指定）',variable=self.measure_mode,command=self.request_draw).pack(anchor='w')
         ttk.Label(measure,textvariable=self.measure_text,wraplength=275).pack(anchor='w',pady=5)
-        ttk.Button(measure,text='測定点を消去',command=self.clear_measurement).pack(fill='x')
+        ttk.Button(measure,text='測定中の点を消去',command=self.clear_measurement).pack(fill='x')
+        self.measurement_list=ttk.Frame(measure);self.measurement_list.pack(fill='x',pady=5)
+        ttk.Button(measure,text='距離一覧を保存（CSV / JSON）',command=self.save_measurements).pack(fill='x')
+        ttk.Button(measure,text='距離一覧をすべて消去',command=self.reset_measurements).pack(fill='x',pady=3)
         ttk.Label(measure,text='3D・XY・X×AP・Y×APから指定可能。\n3点目を押すと新しい測定を開始します。',wraplength=275).pack(anchor='w',pady=4)
         self.save_button.pack(fill='x',pady=4); self._controls.append(self.save_button)
         ttk.Label(left,textvariable=self.summary,wraplength=245,justify='left').pack(fill='x',pady=10)
@@ -228,7 +237,7 @@ class VolumePanel(ttk.Frame):
             self.canvases[name] = canvas
             if name!='3D': canvas.bind('<ButtonPress-1>',lambda event,name=name:self.select_plane(event,name))
             if name!='3D':
-                slider = ttk.Scale(frame,from_=0,to=1,variable=self.indices[name],command=lambda value:self.select_slice_control(),state='disabled')
+                slider = ArrowScale(frame,from_=0,to=1,variable=self.indices[name],command=lambda value:self.select_slice_control(),state='disabled')
                 slider.grid(row=2,column=0,sticky='ew')
                 ttk.Label(frame,textvariable=self.slice_labels[name]).grid(row=3,column=0,sticky='w')
                 self.sliders[name] = slider
@@ -328,7 +337,7 @@ class VolumePanel(ttk.Frame):
 
     def clear(self,message='画像を読み込み、「3D構築」を押してください。'):
         self.volume = None
-        self.clear_measurement()
+        self.reset_measurements()
         self._plane_regions.clear()
         self._picked = None
         self._slice_selected=False
@@ -413,7 +422,7 @@ class VolumePanel(ttk.Frame):
     def built(self,volume):
         self.reset_render()
         self.volume = volume
-        self.clear_measurement()
+        self.reset_measurements()
         if not self._scale_manual:self.scale_length.set(50.)
         self._picked = None
         self._slice_selected=True
@@ -439,17 +448,63 @@ class VolumePanel(ttk.Frame):
             initialfile=(self.app.save_name.get() or 'BRAIN')+'_3d.npz',defaultextension='.npz',filetypes=[('NumPy volume','*.npz')])
         if not path: return
         volume = self.volume
-        view = {'mode':'image_stack','opacity':self.opacity.get()/100,'black_transparent':self.black_transparent.get(),'ap_order':AP_ORDERS[self.ap_order.get()],'display_ap_direction':'A_to_P','camera_depth':'positive_away','ap_spacing_scale':self.ap_spacing_scale(),'ap_spacing_relative_to_default':self._display_ap_spacing,'yaw':self.yaw,'pitch':self.pitch,'zoom':self.zoom,
+        volume.params['workspace']=self.app.workspace_snapshot()
+        view=self.view_state()
+        self.run_job('3Dデータ保存中',lambda cancel,progress:save_volume(volume,path,view,cancel),
+                     lambda target:self.saved(target))
+
+    def view_state(self):
+        return {'mode':'image_stack','opacity':self.opacity.get()/100,'black_transparent':self.black_transparent.get(),'ap_order':AP_ORDERS[self.ap_order.get()],'display_ap_direction':'A_to_P','camera_depth':'positive_away','ap_spacing_scale':self.ap_spacing_scale(),'ap_spacing_relative_to_default':self._display_ap_spacing,'yaw':self.yaw,'pitch':self.pitch,'zoom':self.zoom,
                 'visible_section_indices':[i+1 for i in self.visible_sections()],'visible_display_channels':[i+1 for i in self.visible_channels()],
                 'channel_opacities':list(self.opacity_weights()),'highlight_selected_section':self.highlight_section.get(),
                 'selected_section_index':self.selected_z()+1 if self._slice_selected else None,'hidden_from_anterior_count':self.cut_value(),
                 'cut_reference':'first_image' if AP_ORDERS[self.ap_order.get()]=='unspecified' else 'A',
                 'highlight_parameters':{'selected_opacity_minimum':.85,'other_sections_opacity_factor':.2},
                 'checked_section_indices':[i+1 for i,var in enumerate(self.section_checks) if var.get()],
-                'distance_measurement':self.measurement_metadata(),
+                'distance_measurement':self.measurement_metadata(),'distance_measurements':self.measurements_metadata(),
+                'section_positions':{name:int(round(var.get())) for name,var in self.indices.items()},
                 'pan_pixels':list(self.pan),'scale_bar_length_um':self.scale_length.get(),'scale_bar_show_text':self.scale_show_text.get(),'scale_bar_reference':'ML/DV/AP (AP display spacing accounted)','plane_scale_bars':{name:control.settings() for name,control in self.plane_scales.items()},'axes':{'X':'ML','Y':'DV (image up)','Z':'AP'}}
-        self.run_job('3Dデータ保存中',lambda cancel,progress:save_volume(volume,path,view,cancel),
-                     lambda target:self.saved(target))
+
+    def restore_saved(self,volume,view):
+        self.built(volume)
+        params=volume.params
+        self.use_raw.set(not params.get('aligned',False))
+        for var,value in zip(self.spacing,(*params.get('input_pixel_size_xy',volume.spacing_xyz[:2]),volume.spacing_xyz[2])):var.set(value)
+        self.limit.set(str(max(volume.data.shape[1:])))
+        order=view.get('ap_order',params.get('ap_order','A_to_P'))
+        self.ap_order.set(next((name for name,value in AP_ORDERS.items() if value==order),list(AP_ORDERS)[1]))
+        for key,low,high,default in [('yaw',-1e9,1e9,55),('pitch',-1e9,1e9,20),('zoom',.01,8,1)]:
+            value=float(view.get(key,default));setattr(self,key,max(low,min(high,value)))
+        self.pan=tuple(view.get('pan_pixels',[0.,0.]))
+        self.opacity.set(max(1,min(100,float(view.get('opacity',.15))*100)))
+        self.black_transparent.set(bool(view.get('black_transparent',True)))
+        self.set_display_ap_spacing(view.get('ap_spacing_relative_to_default',1.))
+        self.scale_length.set(view.get('scale_bar_length_um',50.));self.scale_show_text.set(bool(view.get('scale_bar_show_text',True)))
+        self.highlight_section.set(bool(view.get('highlight_selected_section',False)))
+        self.cut_count.set(view.get('hidden_from_anterior_count',0))
+        for name,var in self.indices.items():
+            maximum={'XY':volume.data.shape[0],'XZ':volume.data.shape[1],'YZ':volume.data.shape[2]}[name]
+            var.set(max(0,min(maximum-1,int(view.get('section_positions',{}).get(name,maximum//2)))))
+        self._slice_selected=view.get('selected_section_index') is not None
+        if self._slice_selected:self.indices['XY'].set(max(0,min(volume.data.shape[0]-1,int(view['selected_section_index'])-1)))
+        for i,var in enumerate(self.section_checks,1):var.set(i in view.get('checked_section_indices',view.get('visible_section_indices',list(range(1,len(self.section_checks)+1)))))
+        for i,var in enumerate(self.channel_checks,1):var.set(i in view.get('visible_display_channels',list(range(1,len(self.channel_checks)+1))))
+        for var,value in zip(self.channel_opacities,view.get('channel_opacities',[])):var.set(max(0,min(100,float(value)*100)))
+        for info in view.get('distance_measurements',[]):
+            measured=physical_distance(volume,*info['points_zyx'])
+            self.append_measurement({**info,**measured})
+        if not view.get('distance_measurements') and view.get('distance_measurement',{}):
+            old=view['distance_measurement']
+            if old.get('complete'):self.append_measurement({'name':'距離1','visible':True,**old})
+        self._measurement_serial=len(self.measurements)
+        confirmation=params.get('analysis',{}).get('measurement_calibration',{})
+        self._z_confirmed=bool(confirmation.get('z_confirmed',False))
+        self._manual_xy_calibrated=bool(confirmation.get('xy_confirmed',False))
+        for name,options in view.get('plane_scale_bars',{}).items():
+            if name in self.plane_scales:
+                control=self.plane_scales[name];control.enabled.set(bool(options.get('visible',True)))
+                control.value.set(str(options.get('length_um') or 50));control.show_text.set(bool(options.get('show_text',True)))
+        self.status.set('保存済み3Dデータ・表示条件・距離一覧を復元しました。');self.request_draw()
 
     def saved(self,target):
         self.status.set(f'保存完了: {target}')
@@ -634,13 +689,17 @@ class VolumePanel(ttk.Frame):
             self.cut_text.set('0 / 0 枚を非表示');self.selected_section_info.set('切片未選択');return
         for label,color in display_channels(self.volume):
             variable = tk.BooleanVar(value=True); self.channel_checks.append(variable)
-            ttk.Checkbutton(self.channel_choices,text=label,variable=variable,command=self.request_draw).pack(side='left',padx=3)
+            ChannelCheck(self.channel_choices,color=color,text=label,variable=variable,command=self.request_draw).pack(side='left',padx=3)
             opacity=tk.DoubleVar(value=100.);self.channel_opacities.append(opacity)
             row=ttk.Frame(self.channel_opacity_box);row.pack(fill='x',pady=2)
             ttk.Label(row,text=label,width=13).pack(side='left')
-            ttk.Scale(row,from_=0,to=100,variable=opacity,command=lambda value:self.request_draw()).pack(side='left',fill='x',expand=True)
+            ArrowScale(row,from_=0,to=100,variable=opacity,command=lambda value:self.request_draw()).pack(side='left',fill='x',expand=True)
             text=tk.StringVar(value='100 %');self.channel_opacity_labels.append(text)
-            ttk.Label(row,textvariable=text,width=6,anchor='e').pack(side='right')
+            entry=ttk.Entry(row,textvariable=text,width=5);entry.pack(side='right')
+            text.set('100')
+            entry.bind('<Return>',lambda event,var=opacity,text=text:self.edit_opacity(var,text))
+            entry.bind('<FocusOut>',lambda event,var=opacity,text=text:self.edit_opacity(var,text))
+            entry.opacity_text=text
         for i in range(self.volume.data.shape[0]):
             included=i+1 in self.volume.params.get('included_slice_indices',range(1,self.volume.data.shape[0]+1))
             variable = tk.BooleanVar(value=included); self.section_checks.append(variable)
@@ -711,6 +770,9 @@ class VolumePanel(ttk.Frame):
             notice='' if confirmed else '\n間隔未確認：設定値による参考値です。'
             self.measure_text.set(f'A–B：{info["distance_um"]:.4g} µm\nML {parts["ML"]:.4g} / DV {parts["DV"]:.4g} / AP {parts["AP"]:.4g} µm'+notice)
             self.app.add_log('3D距離測定: '+self.measure_text.get().replace('\n',' · '))
+            self._measurement_serial+=1
+            self.append_measurement({'name':f'距離{self._measurement_serial}','visible':True,**info})
+        self.request_draw()
 
     def update_section_info(self):
         if not self._slice_selected:
@@ -722,33 +784,87 @@ class VolumePanel(ttk.Frame):
         visible='' if z in self.visible_sections() else '\n3Dでは現在非表示'
         self.selected_section_info.set(f'切片 {number} / 先頭からAP {z*self.volume.spacing_xyz[2]:.4g} µm\n{name}'+visible)
 
-    def paint_measurement(self,canvas,points):
+    def paint_measurement(self,canvas,points,info=None):
         if len(points)==2 and all(point is not None for point in points):
             a,b=points
             canvas.create_line(*a,*b,fill='#ff80ff',width=2,dash=(4,2),tags='measurement')
-            info=self.measurement_metadata()
-            canvas.create_text((a[0]+b[0])/2,(a[1]+b[1])/2-12,text=f'{info["distance_um"]:.4g} µm',fill='white',tags='measurement')
+            info=info or self.measurement_metadata()
+            canvas.create_text((a[0]+b[0])/2,(a[1]+b[1])/2-12,text=f'{info.get("name","")} {info["distance_um"]:.4g} µm'.strip(),fill='white',tags='measurement')
         for i,point in enumerate(points):
             if point is None:continue
             x,y=point;color=('#00e5ff','#ff80ff')[i]
             canvas.create_oval(x-5,y-5,x+5,y+5,outline=color,width=2,tags='measurement')
             canvas.create_text(x+8,y-8,text=('A','B')[i],anchor='sw',fill=color,tags='measurement')
 
+    def edit_opacity(self,var,text):
+        try:
+            value=float(text.get().strip().rstrip('%'))
+            if not np.isfinite(value) or not 0<=value<=100:raise ValueError()
+            var.set(value)
+        except (ValueError,tk.TclError):self.status.set('不透明度は0〜100の数値を入力してください。')
+        text.set(f'{var.get():g}');self.request_draw()
+
+    def append_measurement(self,info):
+        record=copy.deepcopy(info)
+        record['name_var']=tk.StringVar(value=record.pop('name','距離'))
+        record['visible_var']=tk.BooleanVar(value=record.pop('visible',True))
+        row=ttk.Frame(self.measurement_list);row.pack(fill='x',pady=2);record['row']=row
+        ttk.Checkbutton(row,variable=record['visible_var'],command=self.request_draw).pack(side='left')
+        entry=ttk.Entry(row,textvariable=record['name_var'],width=11);entry.pack(side='left',fill='x',expand=True)
+        entry.bind('<Return>',lambda event:self.request_draw());entry.bind('<FocusOut>',lambda event:self.request_draw())
+        ttk.Label(row,text=f'{record["distance_um"]:.4g} µm').pack(side='left',padx=3)
+        ttk.Button(row,text='×',width=2,command=lambda:self.remove_measurement(record)).pack(side='right')
+        self.measurements.append(record)
+
+    def remove_measurement(self,record):
+        record['row'].destroy();self.measurements.remove(record);self.request_draw()
+
+    def reset_measurements(self):
+        for record in self.measurements:record['row'].destroy()
+        self.measurements.clear();self._measurement_serial=0;self.clear_measurement()
+
+    def measurements_metadata(self):
+        return [{**{key:copy.deepcopy(value) for key,value in item.items() if key not in ('name_var','visible_var','row')},
+                 'name':item['name_var'].get().strip() or f'距離{i+1}','visible':item['visible_var'].get()}
+                for i,item in enumerate(self.measurements)]
+
+    def save_measurements(self):
+        if not self.measurements:return
+        path=filedialog.asksaveasfilename(parent=self.app,title='距離一覧を保存',
+            initialdir=self.app.save_directory.get() or str(self.app.folder or APP_ROOT),
+            initialfile='BRAIN_distances.json',defaultextension='.json',filetypes=[('JSON','*.json'),('CSV','*.csv')])
+        if not path:return
+        try:
+            records=self.measurements_metadata()
+            from export_data import csv_filename
+            if Path(path).suffix.lower()=='.csv':
+                with Path(path).open('w',encoding='utf-8-sig',newline='') as stream:
+                    writer=csv.writer(stream);writer.writerow(['name','visible','distance_um','ML_um','DV_um','AP_um','A_z','A_y','A_x','B_z','B_y','B_x'])
+                    for item in records:writer.writerow([csv_filename(item['name']),item['visible'],item['distance_um'],*[item['components_um'][a] for a in ('ML','DV','AP')],*item['points_zyx'][0],*item['points_zyx'][1]])
+            else:Path(path).write_text(json.dumps({'format':'BRAIN distances','measurements':records},ensure_ascii=False,indent=2,allow_nan=False),encoding='utf-8')
+            self.app.add_log('距離一覧を保存: '+path)
+        except (OSError,ValueError) as error:self.status.set('距離保存エラー: '+str(error))
+
+    def displayed_measurements(self):
+        records=[item for item in self.measurements_metadata() if item['visible']]
+        if len(self.measure_points)==1:records.append({'points_zyx':self.measure_points})
+        return records
+
     def draw_plane_measurement(self,name,indices):
-        if not self.measure_points:return
         left,top,width,height=self._plane_regions[name]
         nz,ny,nx=self.volume.data.shape
-        points=[]
-        for z,y,x in self.measure_points:
-            fixed,u,v,nu,nv={'XY':(z,x,y,nx,ny),'XZ':(y,x,z,nx,nz),'YZ':(x,y,z,ny,nz)}[name]
-            points.append((left+(u+.5)*width/nu,top+(v+.5)*height/nv) if fixed==indices[name] else None)
-        self.paint_measurement(self.canvases[name],points)
+        for info in self.displayed_measurements():
+            points=[]
+            for z,y,x in info['points_zyx']:
+                fixed,u,v,nu,nv={'XY':(z,x,y,nx,ny),'XZ':(y,x,z,nx,nz),'YZ':(x,y,z,ny,nz)}[name]
+                points.append((left+(u+.5)*width/nu,top+(v+.5)*height/nv) if fixed==indices[name] else None)
+            self.paint_measurement(self.canvases[name],points,info)
 
     def draw_3d_measurement(self,key,rotation,scale,origins):
-        if not self.measure_points:return
         basis=rotation[:2,:2]@np.diag(self.volume.spacing_xyz[:2])*scale
-        points=[tuple(basis@[x+.5,y+.5]+origins[z,:2]*scale+[key[1]/2,key[2]/2]) if z in key[10] else None for z,y,x in self.measure_points]
-        self.paint_measurement(self.canvases['3D'],points)
+        for info in self.displayed_measurements():
+            points=[tuple(basis@[x+.5,y+.5]+origins[int(z),:2]*scale+[key[1]/2,key[2]/2]) if z in key[10] else None for z,y,x in info['points_zyx']]
+            self.paint_measurement(self.canvases['3D'],points,info)
 
     def visible_channels(self): return tuple(i for i,variable in enumerate(self.channel_checks) if variable.get())
 
@@ -808,7 +924,9 @@ class VolumePanel(ttk.Frame):
                 canvas.create_text(8,8,anchor='nw',text=f'縦方向: AP · 上={first} / 下={last}',fill='#ffca28')
             self.draw_plane_measurement(name,indices)
         self.opacity_text.set(f'{self.opacity.get():.0f} %')
-        for value,text in zip(self.channel_opacities,self.channel_opacity_labels):text.set(f'{value.get():.0f} %')
+        focused=self.focus_get()
+        for value,text in zip(self.channel_opacities,self.channel_opacity_labels):
+            if getattr(focused,'opacity_text',None) is not text:text.set(f'{value.get():.0f}')
         self.cut_side.set('先頭から切片を隠す（AP未指定）' if AP_ORDERS[self.ap_order.get()]=='unspecified' else 'A側から切片を隠す')
         self.cut_text.set(f'{self.cut_value()} / {len(self.anatomical_sections())} 枚を非表示')
         self.update_section_info()

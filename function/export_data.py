@@ -3,6 +3,7 @@
 """Full-resolution image export and reproducible per-image transform metadata."""
 from __future__ import annotations
 import csv
+import copy
 import json
 import math
 import re
@@ -127,7 +128,7 @@ def make_params(paths,automatic,final,records,canvas,settings,manual_events,canc
                        'automatic_pose':pose(auto,canvas),'manual_pose':pose(manual,canvas),'final_pose':pose(result,canvas),
                        'qc':records[i] if i<len(records) else None})
     return {'format':'BRAIN','version':1,'software_version':APP_VERSION,'saved_at':datetime.now(timezone(timedelta(hours=9))).isoformat(),
-            'input_folder':settings['input_folder'],'alignment':dict(settings),'canvas':{'width':canvas[0],'height':canvas[1]},
+            'workspace':copy.deepcopy(settings.get('_workspace')),'input_folder':settings['input_folder'],'alignment':{k:v for k,v in settings.items() if k!='_workspace'},'canvas':{'width':canvas[0],'height':canvas[1]},
             'coordinates':{'origin':'top-left','x':'right','y':'down','units':'original pixels',
                            'source_pixels':'after EXIF orientation normalization',
                            'matrix':'3x3 source-to-output, column vectors; source_to_output_matrix includes center padding',

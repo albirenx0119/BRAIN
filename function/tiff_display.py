@@ -4,6 +4,8 @@
 import re
 from collections import OrderedDict
 from pathlib import Path
+from slider_controls import ArrowScale
+from channel_widgets import ChannelCheck
 import tkinter as tk
 from tkinter import ttk
 import numpy as np
@@ -149,7 +151,7 @@ class TiffViews(ttk.Frame):
                      'manual':False,'limits':(0.,255.),'scales':[],'scale_sets':{'raw':[],'stack':[]}, 'mode':tk.StringVar(value='all'),
                      'range':tk.StringVar(value=''),'range_entries':[]}
             state['include']=tk.BooleanVar(value=True)
-            check=ttk.Checkbutton(self.merge_choices,text=f'Ch {p+1}',variable=state['include'],command=self.merge)
+            check=ChannelCheck(self.merge_choices,color=state['color'],text=f'Ch {p+1}',variable=state['include'],command=self.merge)
             check.pack(side='left',padx=4);self.merge_checks.append(check)
             state['trace'] = state['color'].trace_add('write',lambda *args:self.panel.request_draw())
             self.channels.append(state)
@@ -162,7 +164,7 @@ class TiffViews(ttk.Frame):
                 for key,label in [('low','下限'),('high','上限')]:
                     row = ttk.Frame(bar); row.pack(fill='x')
                     ttk.Label(row,text=label).pack(side='left')
-                    scale = ttk.Scale(row,from_=0,to=65535,variable=state[key],length=130,
+                    scale = ArrowScale(row,from_=0,to=65535,variable=state[key],length=130,
                                       command=lambda value,page=p:self.manual_range(page))
                     scale.pack(side='left',fill='x',expand=True,padx=4); state['scales'].append(scale)
                     state['scale_sets'][name].append(scale)

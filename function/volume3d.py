@@ -362,3 +362,20 @@ def save_volume(volume,path,view=None,cancel=None):
         return path
     finally:
         if temporary is not None and temporary.exists(): temporary.unlink()
+
+
+def load_volume(path):
+    """Read our numeric NPZ format without unpickling or trusting declared shapes."""
+    import zipfile
+    with zipfile.ZipFile(path) as archive:
+        if sum(info.file_size for info in archive.infolist())>1024**3:raise ValueError('3Dデータが大きすぎます（展開後1GB上限）。')
+    with np.load(path,allow_pickle=False) as saved:
+        params=json.loads(str(saved['params_json'].item()))
+        if params.get('format')!='BRAIN image stack':raise ValueError('BRAINの3Dデータではありません。')
+        data=saved['volume'];valid=saved['valid_mask'];rgb=saved['image_volume_rgb'];spacing=saved['spacing_xyz']
+        channels=saved['channel_intensity'] if 'channel_intensity' in saved else None
+    if data.dtype!=np.uint8 or data.ndim!=3 or not all(data.shape) or data.size>64000000:raise ValueError('3D画像のサイズ・型が不正です。')
+    if valid.dtype!=bool or valid.shape!=data.shape or rgb.dtype!=np.uint8 or rgb.shape!=(*data.shape,3):raise ValueError('3D画像の形状が一致しません。')
+    if spacing.shape!=(3,) or not np.isfinite(spacing).all() or np.any(spacing<=0):raise ValueError('3D画像の実寸情報が不正です。')
+    if channels is not None and (channels.dtype!=np.uint8 or channels.ndim!=4 or channels.shape[1:]!=data.shape or len(channels)!=len(params.get('channel_display_settings',[]))):raise ValueError('3Dチャンネル情報が不正です。')
+    return Volume(data,valid,spacing,params,rgb,channels)

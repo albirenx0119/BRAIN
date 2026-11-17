@@ -27,3 +27,44 @@ def bind_slider(widget):
     for key in ('Left','Right','Up','Down'):
         # Keep specialized controls' existing 1/10/100 or slice-step behavior.
         if not widget.bind('<KeyPress-'+key+'>'):widget.bind('<KeyPress-'+key+'>',step_slider)
+
+
+class ArrowScale(ttk.Scale):
+    """A normal ttk scale with one-unit buttons at both ends."""
+    def __init__(self,parent,**kwargs):
+        self.container=ttk.Frame(parent)
+        super().__init__(self.container,**kwargs)
+        self.decrease=ttk.Button(self.container,text='◀',width=2,command=lambda:self.nudge(-1))
+        self.increase=ttk.Button(self.container,text='▶',width=2,command=lambda:self.nudge(1))
+        self.decrease.pack(side='left')
+        super().pack(side='left',fill='x',expand=True)
+        self.increase.pack(side='right')
+        self._sync_buttons()
+
+    def nudge(self,direction):
+        if self.instate(['disabled']):return
+        self.focus_set()
+        low,high=sorted((float(self.cget('from')),float(self.cget('to'))))
+        self.set(max(low,min(high,self.get()+direction)))
+
+    def _sync_buttons(self):
+        if hasattr(self,'decrease'):
+            state=['disabled'] if self.instate(['disabled']) else ['!disabled']
+            self.decrease.state(state);self.increase.state(state)
+
+    def state(self,statespec=None):
+        result=super().state(statespec)
+        self._sync_buttons() if statespec is not None else None
+        return result
+
+    def configure(self,cnf=None,**kwargs):
+        result=super().configure(cnf,**kwargs)
+        self._sync_buttons()
+        return result
+    config=configure
+    def pack(self,*args,**kwargs):return self.container.pack(*args,**kwargs)
+    def grid(self,*args,**kwargs):return self.container.grid(*args,**kwargs)
+    def place(self,*args,**kwargs):return self.container.place(*args,**kwargs)
+    def pack_forget(self):return self.container.pack_forget()
+    def grid_remove(self):return self.container.grid_remove()
+    def grid_forget(self):return self.container.grid_forget()

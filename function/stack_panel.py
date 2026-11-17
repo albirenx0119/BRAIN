@@ -41,7 +41,7 @@ class StackPanel(ttk.Frame):
         self.auto_brightness = tk.BooleanVar(value=True)
         self._approved_report = None
         self.folder = tk.StringVar()
-        self.status = tk.StringVar(value='analyzeタブでアラインを実行してからスタックしてください。')
+        self.status = tk.StringVar(value='alignタブでアラインを実行してからスタックしてください。')
         self.info = tk.StringVar(value='スタック未作成')
         self.index = tk.IntVar(value=1)
         self.page_count = tk.StringVar(value='/ 0')
@@ -162,7 +162,7 @@ class StackPanel(ttk.Frame):
         self.set_display_slots(app._analysis_slice_indices or range(1,len(paths)+1),app._analysis_total_slices or len(paths))
         self.index_input.configure(to=self.total_pages()); self.index_input.state(['!disabled'])
         self.page_count.set(f'/ {self.total_pages()}'); self.show_page(app._preview_slot)
-        self.status.set('analyzeタブのアライン結果・チャンネル設定を反映しています。' if app._analysis_settings else 'TIFFを表示しています。アライン実行後に結果を自動反映します。')
+        self.status.set('alignタブのアライン結果・チャンネル設定を反映しています。' if app._analysis_settings else 'TIFFを表示しています。アライン実行後に結果を自動反映します。')
         self.request_draw()
         return True
 
@@ -208,7 +208,7 @@ class StackPanel(ttk.Frame):
         if self.sync_analysis(): return
         if self.stack is not None: self.clear('アライン結果が変わりました。スタックを作り直してください。')
 
-    def clear(self,message='analyzeタブでアラインを実行してからスタックしてください。'):
+    def clear(self,message='alignタブでアラインを実行してからスタックしてください。'):
         self.clear_channels()
         self._analysis_revision = self._analysis_display_signature = None
         self.reference_channel = None
@@ -227,7 +227,7 @@ class StackPanel(ttk.Frame):
         paths = tuple(file.path for file in self.app.analysis_files)
         matrices = self.app.alignment_matrices
         if len(paths)<2 or len(matrices)!=len(paths) or any(m is None for m in matrices):
-            self.status.set('先にanalyzeタブで全画像をアラインしてください。'); return
+            self.status.set('先にalignタブで全画像をアラインしてください。'); return
         if not self._external_source and self.sync_analysis(): return
         if not self.folder.get().strip():
             self.status.set('TIFFのフォルダを選択してください。'); return
@@ -344,7 +344,7 @@ class StackPanel(ttk.Frame):
     def stack_channel(self,page):
         if self.stack is None or self.busy: return
         if isinstance(self.stack,AlignedTiffStack) and not self.app._analysis_settings:
-            self.status.set('先にanalyzeタブでアラインを実行してください。'); return
+            self.status.set('先にalignタブでアラインを実行してください。'); return
         state = self.views.channels[page]
         if not state['manual']: self.views.rendered(page,self.views.raw_pixels(self._current_page,page))
         display_limits = tuple(state['limits'])
@@ -368,7 +368,7 @@ class StackPanel(ttk.Frame):
     def stack_all(self):
         if self.stack is None or self.busy:return
         if isinstance(self.stack,AlignedTiffStack) and not self.app._analysis_settings:
-            self.status.set('先にanalyzeタブでアラインを実行してください。');return
+            self.status.set('先にalignタブでアラインを実行してください。');return
         self.views.ensure(self.stack.array.shape[1])
         plans=[]
         try:

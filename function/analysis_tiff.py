@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Horizontal multichannel analysis display with synchronized single-channel focus."""
 from collections import OrderedDict
+from slider_controls import ArrowScale
+from channel_widgets import ChannelCheck
 import tkinter as tk
 from tkinter import ttk
 import numpy as np
@@ -47,7 +49,7 @@ class AnalysisTiffView:
             state = {'color':tk.StringVar(value='Gray'),'low':tk.DoubleVar(value=0.),'high':tk.DoubleVar(value=255.),
                      'manual':False,'limits':(0.,255.),'index':None,'bounds_index':None,'scales':[],'entries':[],
                      'include':tk.BooleanVar(value=True)}
-            state['check'] = ttk.Checkbutton(self.app.merged_channels,text=f'Ch {p+1}',variable=state['include'],command=self.app.request_preview_draw)
+            state['check'] = ChannelCheck(self.app.merged_channels,color=state['color'],text=f'Ch {p+1}',variable=state['include'],command=self.app.request_preview_draw)
             state['check'].pack(side='left',padx=3)
             bar = ttk.Frame(self.app.preview_canvas,padding=3); state['bar'] = bar
             row = ttk.Frame(bar); row.pack(fill='x')
@@ -57,7 +59,7 @@ class AnalysisTiffView:
             for key,label in [('low','下限'),('high','上限')]:
                 row = ttk.Frame(bar); row.pack(fill='x')
                 ttk.Label(row,text=label).pack(side='left')
-                scale = ttk.Scale(row,variable=state[key],from_=0,to=65535,length=90,
+                scale = ArrowScale(row,variable=state[key],from_=0,to=65535,length=90,
                                   command=lambda value,page=p:self.manual(page))
                 scale.pack(side='left',fill='x',expand=True); state['scales'].append(scale)
                 bind_intensity_keys(scale,state[key],lambda page=p:self.manual(page))
@@ -70,6 +72,9 @@ class AnalysisTiffView:
         self.app.channel_colors.refresh()
 
     def color_changed(self):
+        for state in self.channels:state['check'].update_color()
+        for widget in getattr(self.app,'save_channel_checks',[]):
+            if hasattr(widget,'update_color'):widget.update_color()
         self.app.channel_colors.refresh()
         self.app.request_preview_draw()
 

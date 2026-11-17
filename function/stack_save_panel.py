@@ -76,6 +76,7 @@ class StackSavePanel(ttk.Frame):
             if settings['visible'] and (not spacing or settings['length_um'] is None):raise ValueError('スケールバーの長さとX/Y画素サイズを設定するか、スケールバーをOFFにしてください。')
         except (ValueError,OSError,tk.TclError) as error:
             self.info.set('保存エラー: '+str(error));self.app.add_log(self.info.get(),level='error');return
+        plan['workspace']=self.app.workspace_snapshot()
         panel.start_progress('stack / merge画像を保存中')
         events,cancel=panel._events,panel._cancel;stack=panel.stack
         def worker():

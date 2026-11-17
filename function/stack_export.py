@@ -112,7 +112,7 @@ def export_stack(stack,plan,target,scale,spacing,overwrite=False,cancel=None,pro
                 with Image.fromarray(merged) as image:
                     with burn_scale_bar(image,scale,spacing) as output:
                         output.save(staging/plan['merge_filename'],format=plan['format'],**({'quality':95} if plan['format']=='JPEG' else {}))
-            metadata={'format':'BRAIN stack export 1','saved_at':datetime.now().astimezone().isoformat(),
+            metadata={'format':'BRAIN stack export 1','workspace':copy.deepcopy(plan.get('workspace')),'saved_at':datetime.now().astimezone().isoformat(),
                 'image_format':plan['format'],'pixel_format':'RGB uint8; native canvas resolution; display-mapped intensities',
                 'canvas_xy':[w,h],'spacing_xy_um':list(spacing) if spacing else None,'scale_bar':scale,
                 'channels':[plan['channels'][p] for p in plan['pages']],

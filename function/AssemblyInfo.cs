@@ -7,6 +7,6 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyDescription("Brain Reconstruction, Alignment & Imaging for Neuroscience")]
 [assembly: AssemblyCompany("Ren Y Sato")]
 [assembly: AssemblyCopyright("Copyright © 2026 Ren Y Sato")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.0.1.0")]
+[assembly: AssemblyFileVersion("1.0.1.0")]
 [assembly: ComVisible(false)]
