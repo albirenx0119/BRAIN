@@ -21,7 +21,7 @@ static class Updates
 {
     internal const string Repository = "https://github.com/albirenx0119/BRAIN";
     const string ManifestUrl = "https://raw.githubusercontent.com/albirenx0119/BRAIN/main/version.json";
-    const long MaxArchive = 100 * 1024 * 1024;
+    const long MaxFileBytes = 100 * 1024 * 1024;
     const long MaxExpanded = 300 * 1024 * 1024;
     static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     delegate bool EnumCallback(IntPtr hwnd,IntPtr value);
@@ -213,29 +213,90 @@ static class Updates
         }
     }
 
-    static string Download(string home,Manifest remote,Action<string> status)
+    static bool Matches(string path,string expected)
+    {
+        return File.Exists(path) && String.Equals(Hash(path),expected,StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static List<string> ChangedFiles(string home,Manifest manifest)
+    {
+        var result=new List<string>();
+        foreach (var item in manifest.Files)
+            if (!Matches(Under(home,item.Key),item.Value)) result.Add(item.Key);
+        result.Sort(StringComparer.Ordinal); return result;
+    }
+
+    static void CheckManifest(Manifest actual,Manifest expected)
+    {
+        if (actual.Number!=expected.Number || actual.Tag!=expected.Tag || actual.Files.Count!=expected.Files.Count)
+            throw new Exception("公開情報と更新先のファイル一覧が一致しません。");
+        foreach (var item in expected.Files)
+            if (!actual.Files.ContainsKey(item.Key) || !String.Equals(actual.Files[item.Key],item.Value,StringComparison.OrdinalIgnoreCase))
+                throw new Exception("公開情報と更新先のファイル一覧が一致しません。");
+    }
+
+    static void VerifyPrepared(string home,string payload,Manifest manifest)
+    {
+        foreach (var item in manifest.Files)
+        {
+            string staged=Under(payload,item.Key);
+            string path=File.Exists(staged) ? staged : Under(home,item.Key);
+            if (!Matches(path,item.Value)) throw new Exception("更新ファイルの検証に失敗しました: "+item.Key);
+        }
+    }
+
+    // The fetch callback writes one fixed-release file; tests substitute local files.
+    internal static string PrepareFiles(string home,Manifest remote,Action<string,string> fetch,Action<string> status)
     {
         string updates=Under(home,".updates"); Directory.CreateDirectory(updates);
         string stage=Under(updates,"stage-"+Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
         try
         {
-            string archive=Path.Combine(stage,"download.zip");
-            string url="https://codeload.github.com/albirenx0119/BRAIN/zip/refs/tags/"+remote.Tag;
-            using (var response=Request(url,15000))
-            using (var input=response.GetResponseStream())
-            using (var output=File.Create(archive))
+            string payload=Path.Combine(stage,"payload"); Directory.CreateDirectory(payload);
+            string metadata=Under(payload,"version.json"); fetch("version.json",metadata);
+            if (new FileInfo(metadata).Length>65536) throw new Exception("更新情報が大きすぎます。");
+            Manifest pinned=Parse(File.ReadAllText(metadata,Encoding.UTF8)); CheckManifest(pinned,remote);
+            List<string> changed=ChangedFiles(home,pinned);
+            status("変更・追加ファイル: "+changed.Count+" / "+pinned.Files.Count+" 件");
+            long total=0;
+            for (int i=0;i<changed.Count;i++)
             {
-                byte[] buffer=new byte[65536]; int count;
-                while ((count=input.Read(buffer,0,buffer.Length))>0)
-                {
-                    if (output.Length+count>MaxArchive) throw new Exception("更新ZIPが大きすぎます。");
-                    output.Write(buffer,0,count); status("更新をダウンロード中… "+(output.Length/1024)+" KB");
-                }
+                string relative=changed[i],destination=Under(payload,relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                status("変更ファイルをダウンロード中… "+(i+1)+" / "+changed.Count+" · "+relative);
+                fetch(relative,destination);
+                long length=new FileInfo(destination).Length; total+=length;
+                if (length>MaxFileBytes || total>MaxExpanded) throw new Exception("更新ファイルが大きすぎます。");
+                if (!Matches(destination,pinned.Files[relative])) throw new Exception("更新ファイルの検証に失敗しました: "+relative);
             }
-            status("更新ファイルを検証しています…");
-            Extract(archive,Path.Combine(stage,"payload"),remote); File.Delete(archive); return stage;
+            // Unchanged files are verified in place, rather than copied or downloaded.
+            VerifyPrepared(home,payload,pinned); return stage;
         }
         catch { DeleteStage(home,stage); throw; }
+    }
+
+    static void DownloadFile(string url,string destination,long maximum)
+    {
+        using (var response=Request(url,15000))
+        using (var input=response.GetResponseStream())
+        using (var output=File.Create(destination))
+        {
+            if (response.ContentLength>maximum) throw new Exception("更新ファイルが大きすぎます。");
+            byte[] buffer=new byte[65536]; int count;
+            while ((count=input.Read(buffer,0,buffer.Length))>0)
+            {
+                if (output.Length+count>maximum) throw new Exception("更新ファイルが大きすぎます。");
+                output.Write(buffer,0,count);
+            }
+        }
+    }
+
+    static string Download(string home,Manifest remote,Action<string> status)
+    {
+        return PrepareFiles(home,remote,delegate(string relative,string destination) {
+            string url="https://raw.githubusercontent.com/albirenx0119/BRAIN/"+remote.Tag+"/"+relative;
+            DownloadFile(url,destination,relative=="version.json" ? 65536 : MaxFileBytes);
+        },status);
     }
 
     static void DeleteStage(string home,string stage)
@@ -359,15 +420,19 @@ static class Updates
         if (Path.GetDirectoryName(stage)!=Path.Combine(home,".updates") || !Path.GetFileName(stage).StartsWith("stage-")) throw new Exception("不正な更新フォルダです。");
         Under(home,".updates/"+Path.GetFileName(stage));
         string payload=Path.Combine(stage,"payload"), backup=Path.Combine(stage,"backup");
-        Manifest manifest=Parse(File.ReadAllText(Under(payload,"version.json"),Encoding.UTF8)); Verify(payload,manifest);
+        Manifest manifest=Parse(File.ReadAllText(Under(payload,"version.json"),Encoding.UTF8)); VerifyPrepared(home,payload,manifest);
         string localVersion=Path.Combine(home,"version.json");
         if (File.Exists(localVersion) && Parse(File.ReadAllText(localVersion,Encoding.UTF8)).Version>=manifest.Version) return;
         var changed=new List<string>(); var existed=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var files=new List<string>(manifest.Files.Keys); files.Sort(StringComparer.Ordinal); files.Add("version.json");
+        var files=new List<string>();
+        foreach (var item in manifest.Files)
+            if (File.Exists(Under(payload,item.Key)) && !Matches(Under(home,item.Key),item.Value)) files.Add(item.Key);
+        files.Sort(StringComparer.Ordinal); files.Add("version.json");
         try
         {
             foreach (string relative in files)
             {
+                if (relative=="version.json") Verify(home,manifest);
                 string destination=Under(home,relative), old=Under(backup,relative);
                 if (File.Exists(destination))
                 {

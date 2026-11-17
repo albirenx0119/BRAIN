@@ -165,7 +165,7 @@ class FeedbackSender:
             _atomic_json(self.local/'feedback_state.json',state)
             payload = json.dumps({'content':text,'allowed_mentions':{'parse':[]}},ensure_ascii=False).encode('utf-8')
             request = urllib.request.Request(url,data=payload,method='POST',headers={
-                'Content-Type':'application/json; charset=utf-8','User-Agent':'BRAIN-Feedback/1.0.1'})
+                'Content-Type':'application/json; charset=utf-8','User-Agent':'BRAIN-Feedback/1.1.0'})
             try:
                 with self.opener(request,timeout=15) as response:
                     body = response.read(65536)

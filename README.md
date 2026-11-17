@@ -2,7 +2,7 @@
 
 **Brain Reconstruction, Alignment & Imaging for Neuroscience**
 
-**バージョン: 1.0.1 · 更新日時: 2026-11-17 17:37:33 JST · 作者: Ren Y Sato**
+**バージョン: 1.1.0 · 更新日時: 2026-11-17 18:15:56 JST · 作者: Ren Y Sato**
 Copyright © 2026 Ren Y Sato
 
 ## 全体の機能説明
@@ -45,8 +45,8 @@ py -3 -m pip install -r .\function\requirements.txt
 
 ## 必要ファイル・ダウンロードと起動
 
-**[BRAIN v1.0.1をダウンロード](https://github.com/albirenx0119/BRAIN/archive/refs/tags/v1.0.1.zip)**
-[リリースページ](https://github.com/albirenx0119/BRAIN/releases/tag/v1.0.1) · [GitHub](https://github.com/albirenx0119/BRAIN)
+**[BRAIN v1.1.0をダウンロード](https://github.com/albirenx0119/BRAIN/archive/refs/tags/v1.1.0.zip)**
+[リリースページ](https://github.com/albirenx0119/BRAIN/releases/tag/v1.1.0) · [GitHub](https://github.com/albirenx0119/BRAIN)
 
 1. ZIPを右クリックして「すべて展開」を選びます。ZIP内から直接実行しないでください。
 2. 展開先は、書き込みできるフォルダにしてください。表示キャッシュ・設定・ログもこのフォルダ内へ保存します。
@@ -222,7 +222,7 @@ stack画像とmerge画像の保存を個別に選べます。PNG・TIFF・JPEG�
 
 正式名称、作者、Copyright、バージョン、使用ライブラリとライセンスを確認できます。
 
-- **アップデートを確認**: 新しいバージョンと変更内容を確認し、更新するか選べます。更新にはネット接続が必要です。
+- **アップデートを確認**: 新しいバージョンと変更内容を確認し、更新するか選べます。更新にはネット接続が必要です。更新先とPC内の実ファイルをSHA-256で比較し、変更・追加・不足・破損したファイルだけをGitHubから個別に取得します。v1.1.0の更新機能ではZIPダウンロードは行いません。取得したファイルは一時フォルダで検証し、アプリ終了後に元の場所へ置き換えて再起動します。変更のないファイルは書き換えません。置き換え中に失敗した場合は、変更したファイルをバックアップから復元します。画像・解析結果・環境設定は更新対象に含めません。旧版からv1.1.0へ更新する最初の1回は、旧版に搭載されたZIP方式で更新し、その後の更新から個別ファイル取得方式になります。
 - **表示テーマ**: 黒基調・白基調・PCの設定に合わせる、から選べます。
 - **debug/function**: 不具合や要望を入力し、Sendで開発者へ送信します。送るのは入力したメッセージです。個人情報や画像データを書き込まないでください。連投時は一時的に送信を制限します。
 
